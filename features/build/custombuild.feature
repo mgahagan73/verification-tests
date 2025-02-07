@@ -3,12 +3,12 @@ Feature: custombuild.feature
   # @author wzheng@redhat.com
   # @case_id OCP-11443
   @admin
-  Scenario: Build with custom image - origin-custom-docker-builder
+  Scenario: OCP-11443 Build with custom image - origin-custom-docker-builder
     Given cluster role "system:build-strategy-custom" is added to the "first" user
     Then the step should succeed
     Given I have a project
     When I run the :create client command with:
-      | f | https://raw.githubusercontent.com/openshift/origin/master/examples/sample-app/application-template-custombuild.json |
+      | f | https://raw.githubusercontent.com/openshift/origin/release-3.11/examples/sample-app/application-template-custombuild.json |
     Then the step should succeed
     And I create a new application with:
       | template | ruby-helloworld-sample |

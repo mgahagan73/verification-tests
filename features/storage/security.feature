@@ -9,12 +9,13 @@ Feature: storage security check
     Given I switch to cluster admin pseudo user
     And I use the "<%= project.name %>" project
     When I run oc create over "https://raw.githubusercontent.com/openshift-qe/v3-testfiles/master/storage/<type>/security/<type>-selinux-fsgroup-test.json" replacing paths:
-      | ["metadata"]["name"]                                      | pod-<%= project.name %> |
-      | ["spec"]["containers"][0]["volumeMounts"][0]["mountPath"] | /mnt                    |
-      | ["spec"]["securityContext"]["seLinuxOptions"]["level"]    | s0:c13,c2               |
-      | ["spec"]["securityContext"]["fsGroup"]                    | 24680                   |
-      | ["spec"]["securityContext"]["runAsUser"]                  | 1000160000              |
-      | ["spec"]["volumes"][0]["<storage_type>"]["<volume_name>"] | <%= cb.vid %>           |
+      | ["metadata"]["name"]                                      | pod-<%= project.name %>                                                                               |
+      | ["spec"]["containers"][0]["volumeMounts"][0]["mountPath"] | /mnt                                                                                                  |
+      | ["spec"]["containers"][0]["image"]                        | quay.io/openshifttest/storage@sha256:a05b96d373be86f46e76817487027a7f5b8b5f87c0ac18a246b018df11529b40 |
+      | ["spec"]["securityContext"]["seLinuxOptions"]["level"]    | s0:c13,c2                                                                                             |
+      | ["spec"]["securityContext"]["fsGroup"]                    | 24680                                                                                                 |
+      | ["spec"]["securityContext"]["runAsUser"]                  | 1000160000                                                                                            |
+      | ["spec"]["volumes"][0]["<storage_type>"]["<volume_name>"] | <%= cb.vid %>                                                                                         |
     Then the step should succeed
     And the pod named "pod-<%= project.name %>" becomes ready
     When I execute on the pod:
@@ -52,11 +53,12 @@ Feature: storage security check
     Given I ensure "pod-<%= project.name %>" pod is deleted
 
     When I run oc create over "https://raw.githubusercontent.com/openshift-qe/v3-testfiles/master/storage/<type>/security/<type>-privileged-test.json" replacing paths:
-      | ["metadata"]["name"]                                      | pod2-<%= project.name %> |
-      | ["spec"]["containers"][0]["volumeMounts"][0]["mountPath"] | /mnt                     |
-      | ["spec"]["securityContext"]["seLinuxOptions"]["level"]    | s0:c13,c2                |
-      | ["spec"]["securityContext"]["fsGroup"]                    | 24680                    |
-      | ["spec"]["volumes"][0]["<storage_type>"]["<volume_name>"] | <%= cb.vid %>            |
+      | ["metadata"]["name"]                                      | pod2-<%= project.name %>                                                                              |
+      | ["spec"]["containers"][0]["volumeMounts"][0]["mountPath"] | /mnt                                                                                                  |
+      | ["spec"]["containers"][0]["image"]                        | quay.io/openshifttest/storage@sha256:a05b96d373be86f46e76817487027a7f5b8b5f87c0ac18a246b018df11529b40 |
+      | ["spec"]["securityContext"]["seLinuxOptions"]["level"]    | s0:c13,c2                                                                                             |
+      | ["spec"]["securityContext"]["fsGroup"]                    | 24680                                                                                                 |
+      | ["spec"]["volumes"][0]["<storage_type>"]["<volume_name>"] | <%= cb.vid %>                                                                                         |
     Then the step should succeed
     And the pod named "pod2-<%= project.name %>" becomes ready
     When I execute on the pod:
@@ -101,7 +103,7 @@ Feature: storage security check
   # @author chaoyang@redhat.com
   # @case_id OCP-9709
   @admin
-  Scenario: secret volume security check
+  Scenario: OCP-9709:Storage secret volume security check
     Given I have a project
     When I run the :create client command with:
       | filename | https://raw.githubusercontent.com/openshift-qe/v3-testfiles/master/storage/secret/secret.yaml |
@@ -110,7 +112,7 @@ Feature: storage security check
     Given I switch to cluster admin pseudo user
     And I use the "<%= project.name %>" project
     When I run the :create client command with:
-      | filename | https://raw.githubusercontent.com/openshift-qe/v3-testfiles/master/storage/secret/secret-pod-test.json |
+      | filename | https://raw.githubusercontent.com/openshift/verification-tests/master/testdata/storage/secret/secret-pod-test.json |
     Then the step should succeed
 
     Given the pod named "secretpd" becomes ready

@@ -22,6 +22,7 @@ Feature: Persistent Volume Claim binding policies
     Then the step should succeed
 
     # Create PVC with accessMode3
+    Given I ensure "nfsc" pvc is deleted after scenario
     When I create a manual pvc from "https://raw.githubusercontent.com/openshift-qe/v3-testfiles/master/storage/nfs/claim-rwo.json" replacing paths:
       | ["spec"]["accessModes"][0] | <accessMode3> |
     Then the step should succeed
@@ -31,6 +32,7 @@ Feature: Persistent Volume Claim binding policies
     # Second PV can not bound
     And the "nfs1-<%= project.name %>" PV status is :available
 
+
     Examples:
       | accessMode1   | accessMode2   | accessMode3   |
       | ReadOnlyMany  | ReadWriteMany | ReadWriteOnce | # @case_id OCP-9702
@@ -39,7 +41,7 @@ Feature: Persistent Volume Claim binding policies
 
   # @author yinzhou@redhat.com
   # @case_id OCP-11933
-  Scenario: deployment hook volume inheritance -- with persistentvolumeclaim Volume
+  Scenario: OCP-11933 deployment hook volume inheritance -- with persistentvolumeclaim Volume
     Given I have a project
     When I create a dynamic pvc from "https://raw.githubusercontent.com/openshift-qe/v3-testfiles/master/storage/misc/pvc.json" replacing paths:
       | ["metadata"]["name"] | nfsc |
@@ -65,7 +67,7 @@ Feature: Persistent Volume Claim binding policies
   # @case_id OCP-9931
   @admin
   @destructive
-  Scenario: PV can not bind PVC which request more storage and mismatched accessMode
+  Scenario: OCP-9931 PV can not bind PVC which request more storage and mismatched accessMode
     Given I have a project
     When admin creates a PV from "https://raw.githubusercontent.com/openshift-qe/v3-testfiles/master/storage/nfs/auto/pv-template.json" where:
       | ["metadata"]["name"]       | pv-<%= project.name %> |
@@ -145,7 +147,7 @@ Feature: Persistent Volume Claim binding policies
   # @case_id OCP-9937
   @admin
   @destructive
-  Scenario: PV and PVC bound and unbound many times
+  Scenario: OCP-9937 PV and PVC bound and unbound many times
     Given default storage class is deleted
     Given I have a project
     And I have a NFS service in the project

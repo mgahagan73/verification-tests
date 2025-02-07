@@ -23,7 +23,7 @@ Feature: Dynamic provisioning
 
     And I save volume id from PV named "<%= pvc.volume_name %>" in the :volumeID clipboard
 
-    When I run oc create over "https://raw.githubusercontent.com/openshift-qe/v3-testfiles/master/storage/misc/pod.yaml" replacing paths:
+    When I run oc create over "https://raw.githubusercontent.com/openshift/verification-tests/master/testdata/storage/misc/pod.yaml" replacing paths:
       | ["spec"]["volumes"][0]["persistentVolumeClaim"]["claimName"] | <%= pvc.name %>       |
       | ["metadata"]["name"]                                         | mypod1                |
       | ["spec"]["containers"][0]["volumeMounts"][0]["mountPath"]    | /mnt/<cloud_provider> |
@@ -59,7 +59,7 @@ Feature: Dynamic provisioning
   # @author lxia@redhat.com
   # @case_id OCP-10790
   @admin
-  Scenario: Check only one pv created for one pvc for dynamic provisioner
+  Scenario: OCP-10790 Check only one pv created for one pvc for dynamic provisioner
     Given I have a project
     And I run the steps 30 times:
     """

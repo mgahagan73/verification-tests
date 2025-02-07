@@ -151,6 +151,7 @@ module BushSlicer
           quoted_run_id = "'" + pr[:run_id] + "'"
 
           puts "test run id: #{HighLine.color(quoted_run_id, :bright_blue)}"
+          # TODO: move waiting using HTTP to Polarshift, msg goes before we can subscribe
           filter = pr[:import_filter]
           if options.no_wait.nil?
             puts "waiting for a bus message with selector: #{filter}"
@@ -161,6 +162,28 @@ module BushSlicer
             end
             bus_client.join
             puts STOMPBus.msg_to_str(message)
+          end
+        end
+      end
+      
+      command :"get-run" do |c|
+        c.syntax = "#{$0} get-run [options]"
+        c.description = "retrieve a test run Polarion\n\t" \
+          "e.g. tools/polarshift.rb get-run my_run_id"
+        c.option('-o', "--output FILE", "Write query result to file in JSON format")
+        c.action do |args, options|
+          setup_global_opts(options)
+
+          if args.size != 1
+            raise "command expects exactly one parameter being the test run id"
+          end
+
+          test_run_id = args.first
+          query_result = polarshift.get_run_smart(project, test_run_id)
+          result = query_result
+          pp(result)
+          if options.output
+            File.write(options.output, JSON.pretty_generate(result))
           end
         end
       end

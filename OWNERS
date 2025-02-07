@@ -1,3 +1,10 @@
 approvers:
-- akostadinov
-- pruan-rht
+  - akostadinov
+  - liangxia
+  - pruan-rht
+
+reviewers:
+  - liangxia
+  - pruan-rht
+  - yanpzhan
+  - yapei

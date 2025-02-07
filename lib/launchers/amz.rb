@@ -1,6 +1,11 @@
 #!/usr/bin/env ruby
 require 'aws-sdk'
 
+lib_path = File.expand_path(File.dirname(File.dirname(__FILE__)))
+unless $LOAD_PATH.any? {|p| File.expand_path(p) == lib_path}
+    $LOAD_PATH.unshift(lib_path)
+end
+
 require 'common'
 require 'host'
 require 'launchers/cloud_helper'
@@ -13,15 +18,22 @@ module BushSlicer
 
     attr_reader :config
 
-    def initialize(access_key: nil, secret_key: nil, service_name: nil)
+    def initialize(access_key: nil, secret_key: nil, service_name: nil, region: nil)
       service_name ||= :AWS
       @config = conf[:services, service_name]
       @can_terminate = true
 
+      idx = ENV["AWS_CREDENTIALS"]&.index(':')
+      if idx
+        logger.info("Using envvar AWS_CREDENTIALS.")
+        access_key = ENV["AWS_CREDENTIALS"][0..idx-1]
+        secret_key = ENV["AWS_CREDENTIALS"][idx+1..-1]
+      end
+
       if access_key && secret_key
         awscred = {
-          "AWSAccessKeyId" => access_key,
-          "AWSSecretKey" => secret_key
+          "aws_access_key_id" => access_key,
+          "aws_secret_access_key" => secret_key
         }
       else
         # try to find a suitable Amazon AWS credentials file
@@ -30,7 +42,7 @@ module BushSlicer
           begin
             cred_file = File.expand_path(cred_file)
             logger.info("Using #{cred_file} credentials file.")
-            awscred = Hash[File.read(cred_file).scan(/(.+?)=(.+)/)]
+            awscred = Hash[File.read(cred_file).scan(/(.+?)\s*=\s*(.+)/)]
             break # break if no error was raised above
           rescue
             logger.warn("Problem reading credential file #{cred_file}")
@@ -40,13 +52,22 @@ module BushSlicer
       end
 
       raise "no readable credentials file or external credentials config found" unless awscred
-
       Aws.config.update( config[:config_opts].merge({
         credentials: Aws::Credentials.new(
-          awscred["AWSAccessKeyId"],
-          awscred["AWSSecretKey"]
+          awscred["aws_access_key_id"],
+          awscred["aws_secret_access_key"]
         )
       }) )
+      Aws.config.update( config[:config_opts].merge({region: region})) if region
+      ## for internal data-hub, which is a s3 like service, we need to override the
+      if service_name == 'DATA-HUB'
+        datahub_endpoint = conf.dig(:services, service_name, :endpoint)
+        Aws.config.update(config[:config_opts].merge({
+          endpoint: datahub_endpoint,
+          force_path_style: true,
+
+        }))
+      end
     end
 
     private def client_ec2
@@ -61,12 +82,28 @@ module BushSlicer
       @client_sts ||= Aws::STS::Client.new
     end
 
+    private def client_iam
+      @client_iam ||= Aws::IAM::Client.new
+    end
+
+    private def client_r53
+      @client_r53 ||= Aws::Route53::Client.new
+    end
+
     private def ec2
       @ec2 ||= Aws::EC2::Resource.new(client: client_ec2)
     end
 
     private def s3
       @s3 ||= Aws::S3::Resource.new(client: client_s3)
+    end
+
+    private def current_user
+      @current_user ||= Aws::IAM::CurrentUser.new(client: client_iam)
+    end
+
+    def arn
+      current_user.arn
     end
 
     # @param ecoded_message [String]
@@ -84,9 +121,67 @@ module BushSlicer
       launch_instances(image=image_id)
     end
 
-    def s3_upload_file(bucket:, file:, target: nil)
+    ####### s3 bucket related methods
+    def s3_list_buckets
+      res = s3.client.list_buckets
+      res.buckets
+    end
+
+    def s3_create_bucket(bucket: nil, acl: 'public-read')
+      s3.client.create_bucket(bucket: bucket, acl: acl)
+    end
+
+    # given a s3 object key, return a valid URL to the key to be accessible
+    # via web
+    def s3_generate_url(key: nil, bucket_name: 'cucushift-html-logs', expires_in_seconds: 604800)
+      Aws::S3::Object.new(key: key, bucket_name: bucket_name).presigned_url(:get, expires_in: expires_in_seconds)
+    end
+
+    # input:
+    # @return a list of object keys in the bucket
+    def s3_list_bucket_contents(bucket: nil, prefix: "", delimiter: "")
+      res = s3.bucket(bucket).objects(prefix: prefix, delimiter: delimiter).collect(&:key)
+      puts res
+      return res
+    end
+
+    def s3_delete_object_from_bucket(bucket:, key: )
+      s3.client.delete_object(bucket: bucket, key: key)
+    end
+
+    def s3_batch_delete_from_bucket(bucket:, prefix:)
+      s3.bucket(bucket).objects(prefix: prefix).batch_delete!
+    end
+
+
+
+    # target is the directory path to the file, which is not really a path but
+    # a key index for example we can think of
+    # 2021/09/04/12:11:12 and 2021/09/04/23:11:12 as differnt directories
+    def s3_upload_file(bucket:, file:, target: nil, content_type: 'text/html')
       target ||= File.basename file
-      s3.bucket(bucket).object(target).upload_file(file)
+      begin
+        res = s3.bucket(bucket).object(target).upload_file(file, content_type: content_type)
+        logger.info("S3 upload file status: #{res}")
+      rescue
+        # XXX: don't raise exception to avoid premature exit of long test runs
+        logger.error("Failed to upload file '#{file}' to '#{target}'")
+      end
+    end
+
+    # wrapper around method 's3_upload_file'
+    def upload_cucushift_html(bucket_name: nil, local_log: nil, dst_base_path: nil)
+      file_name = File.basename(local_log)
+      object_key =  File.join(dst_base_path, file_name)
+      local_log = File.join(local_log, "console.html")
+      logger.info("s3 object key: #{object_key}")
+      s3_upload_file(bucket: bucket_name, file: local_log, target: object_key)
+      return object_key
+    end
+
+
+    def s3_delete_bucket(bucket: nil)
+      s3.client.delete_bucket(bucket: bucket)
     end
 
     ########################################################################
@@ -281,6 +376,17 @@ module BushSlicer
       }).to_a
     end
 
+    # @return [Array<Instance>]
+    def get_instances_by_status(status)
+      res = ec2.instances({
+        filters: [
+          {
+            name: "instance-state-name",
+            values: [status]
+          },
+        ]
+      }).to_a
+    end
     # @param [String] ami_id the EC2 AMI-ID
     # @return [Array<String>, Array<Object>] the array of IP address with array of instances object
     def get_instance_ip_by_ami_id(ami_id)
@@ -439,10 +545,126 @@ module BushSlicer
       end
     end
 
+    def get_vpcs
+      res = client_ec2.describe_vpcs.to_a[0]
+      return res.vpcs
+    end
+
     def get_volume_state(volume)
         return volume.state
     end
 
+    # @return [Array <Region>]
+    def get_regions
+      client_ec2.describe_regions.to_a[0][0]
+    end
+
+    def default_zone
+      config[:install_base_domain].sub(/\.$/,"") + "."
+    end
+
+    def default_zone_id
+      @default_r53_zone_id ||= r53_zone_id_by_domain(default_zone)
+    end
+
+    def r53_zone_id_by_domain(domain)
+      zone = client_r53.list_hosted_zones.hosted_zones.find { |z|
+        z.name == domain
+      }
+      unless zone
+        raise "can't find zone '#{domain}' in AWS"
+      end
+      return zone.id.sub(%r{.*/(.*)$}, "\\1")
+    end
+
+    def r53_zone_by_id(id)
+      zone = client_r53.get_hosted_zone({id: id})
+      return zone.hosted_zone.id.sub(%r{.*/(.*)$}, "\\1")
+    end
+
+    # @param [Hash] changes might be something like
+    #   [{
+    #     :action=>"UPSERT",
+    #     :resource_record_set=> {
+    #       :name=>"myhost.qe.devcluster.openshift.com",
+    #       :resource_records=> [{:value=>"192.0.2.44"}],
+    #       :ttl=>60,
+    #       :type=>"A"
+    #     }
+    #   }]
+    # @see https://docs.aws.amazon.com/sdk-for-ruby/v2/api/Aws/Route53/Client.html#change_resource_record_sets-instance_method
+    def change_resource_record_sets(zone_id: nil, changes:)
+      zone_id ||= default_zone_id
+      client_r53.change_resource_record_sets(
+        hosted_zone_id: zone_id,
+        change_batch: { changes: changes }
+      )
+    end
+
+    def list_resource_record_sets(zone_id: nil)
+      zone_id ||= default_zone_id
+      res = []
+      client_r53.list_resource_record_sets(hosted_zone_id: zone_id).each_page { |p|
+        res.concat p.resource_record_sets.map(&:to_h)
+      }
+      return res
+    end
+
+    # @param [Regexp] re
+    # @note be very careful to avoid interfering regular expressions
+    # example: delete_resource_records_re(/my-hostname/)
+    def delete_resource_records_re(re, zone_id: nil)
+      logger.warn("Removing Route53 records matching #{re.inspect}")
+      records = list_resource_record_sets(zone_id: zone_id)
+      to_delete = records.select { |r| r[:name] =~ re }
+      if to_delete.count > 0
+        logger.debug("Removing records: #{to_delete.map {|r| r[:name]}}")
+        list = to_delete.map { |r| { action: "DELETE", resource_record_set: r } }
+        change_resource_record_sets(zone_id: zone_id, changes: list)
+      else
+        logger.info("No records found matching #{re.inspect}")
+      end
+    end
+
+    def create_a_records(name, ips, zone_id: nil, ttl: 180)
+      record = {
+        :action =>"UPSERT",
+        :resource_record_set => {
+          :ttl => ttl,
+          :type => "A"
+        }
+      }
+
+      zone = zone_id ? r53_zone_by_id(zone_id) : default_zone
+      if ! name.end_with?(".")
+        name = "#{name}.#{zone}"
+      end
+      record[:resource_record_set][:name] = name
+      record[:resource_record_set][:resource_records] = ips.map { |ip|
+        {value: ip}
+      }
+      change_resource_record_sets(zone_id: zone_id, changes: [record])
+      return name.sub(/[.]$/,"")
+    end
+
+    def instance_uptime(instance)
+      ((Time.now.utc - instance.launch_time) / (60 * 60)).round(2)
+    end
+
+    def instance_name(instance)
+      begin
+        instance.tags.select { |i| i['value'] if i['key'] == "Name" }.first['value']
+      rescue => e
+        logger.warn  exception_to_string(e)
+      end
+    end
+    # @return group of instances that belong to the same `owned`
+    def instance_owned(instance)
+      res = instance.tags.select { |i| i['key'] if i['value'] == "owned" }
+      if res.count > 0
+        res.first['key'].split('/').last
+      end
+    end
 
     # returns ssh connection
     def get_host(instance, host_opts={}, wait: false)
@@ -479,6 +701,11 @@ module BushSlicer
     # @return [String]
     def secret_key
       ec2.client.config.credentials.secret_access_key
+    end
+
+    # @return [String]
+    def account_id
+      client_sts.get_caller_identity.to_h[:account]
     end
 
     # @return [Object] undefined
@@ -640,4 +867,12 @@ module BushSlicer
       return res
     end
   end
+end
+
+if __FILE__ == $0
+  extend BushSlicer::Common::Helper
+  dhub = BushSlicer::Amz_EC2.new(service_name: "DATA-HUB")
+  bucket_name = 'cucushift-html-logs'
+  res = dhub.s3_list_bucket_contents(bucket: bucket_name)
+  require 'pry'; binding.pry
 end

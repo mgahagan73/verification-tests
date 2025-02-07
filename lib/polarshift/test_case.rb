@@ -61,11 +61,12 @@ module BushSlicer
       end
 
       private def automation_scenario
-        automation_script_parsed.dig("cucushift", "scenario")
+        @automation_scenario ||= "#{automation_script_parsed.dig("cucushift", "scenario")}#{opts[:name_suffix]}"
       end
 
       private def automation_args
-        automation_script_parsed.dig("cucushift", "args")
+        @automation_args ||=
+          automation_script_parsed.dig("cucushift", "args")
       end
 
       private def tags_raw
@@ -87,14 +88,14 @@ module BushSlicer
       # overal scenario execution result
       def result
         case
-        when scenarios.all? { |s| s.passed? }
-          "Passed"
         when scenarios.any? { |s| s.error? }
           "Blocked"
         when scenarios.any? { |s| s.failed? }
           "Failed"
-        when scenarios.any { |s| s.pending? || s.in_progress? }
+        when scenarios.any? { |s| s.pending? || s.in_progress? }
           "Running"
+        when scenarios.all? { |s| s.passed? }
+          "Passed"
         else
           "Waiting"
         end
@@ -118,7 +119,7 @@ module BushSlicer
       #   outdated test_case object
       # hmm, we don't need such method for the time being
 
-      # @param test_case [Cucumber::Core::Test::Case]
+      # @param test_case [Cucumber::Core::Test::Case, Cucumber::Events::TestRunFinished]
       # @return [Boolean] whether Cucumber scenario is matching this record
       def match!(test_case)
         if !automated?
@@ -168,6 +169,10 @@ module BushSlicer
 
       def logger
         request.logger
+      end
+
+      def opts
+        @opts ||= request.send(:test_case_opts)
       end
     end
   end

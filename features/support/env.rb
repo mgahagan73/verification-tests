@@ -14,7 +14,6 @@ require 'common' # common code
 require 'world' # our custom bushslicer world
 require 'log' # BushSlicer::Logger
 require 'manager' # our shared global state
-require 'environment' # environment types classes
 require 'debug'
 
 ## default course of action would be to update BushSlicer files when
@@ -33,46 +32,59 @@ end
 ## while we can move everything inside World, lets try to outline here the
 #    basic steps to have world ready to execute scenario
 Before do |_scenario|
+  if manager.skip_scenario? _scenario
+    manager.skip_scenario_done _scenario
+    skip_this_scenario "Scenario skipped by Test Case Manager"
+    next
+  end
+
   setup_logger
   logger.info("=== Before Scenario: #{_scenario.name} ===")
   localhost.chdir
   self.scenario = _scenario
 
-  ## raise inside block only if error can affect scenarios execution ##
-  no_err, val = capture_error {
+  begin
+    ## raise inside block only if error can affect scenarios execution ##
     # put other calls here to setup world according to tags, etc.
     prepare_scenario_users
-  }
-  err = no_err ? nil : val
-
-  manager.test_case_manager.signal(:finish_before_hook, scenario, err)
-  hook_error!(err)
-  logger.info("=== End Before Scenario: #{_scenario.name} ===")
-  # dedup at these hooks broken as log goes to the next step and in Outlines
-  #   it even ends up under one and the same step. Need to fix hooks somehow.
-  # logger.dedup_start
+  rescue => err
+    logger.error err
+    quit_cucumber
+    raise err
+  ensure
+    manager.test_case_manager.signal(:finish_before_hook, scenario, err)
+    logger.info("=== End Before Scenario: #{_scenario.name} ===")
+    # dedup from before to after hook is tricky, leaving for later
+    # logger.dedup_start
+  end
 end
 
 ## while we can move everything inside World, lets try to outline here the
 #    basic steps that are run after each scenario execution
 After do |_scenario|
+  if _scenario.respond_to?(:test_case_manager_skip?)
+    next
+  end
+
   # logger.dedup_flush
   logger.info("=== After Scenario: #{_scenario.name} ===")
   self.scenario = _scenario # this is different object than in Before hook
 
   debug_in_after_hook
 
-  ## raise inside block only if error can affect next scenarios execution ##
-  no_err, val = capture_error {
+  begin
+    ## raise inside block only if error can affect next scenarios execution ##
     # Manager will call clean-up including self.after_scenario
     manager.after_scenario
-  }
-  err = no_err ? nil : val
-
-  manager.test_case_manager.signal(:finish_after_hook, scenario, err)
-  hook_error!(err)
-  logger.info("=== End After Scenario: #{_scenario.name} ===")
-  BushSlicer::Logger.reset_runtime # otherwise we lose output from test case mgmt
+  rescue => err
+    logger.error err # make sure we capture it with the custom HTTP logger
+    quit_cucumber
+    raise err
+  ensure
+    logger.info("=== End After Scenario: #{_scenario.name} ===")
+    BushSlicer::Logger.reset_runtime # avoid losing output from test case mngr
+    manager.test_case_manager.signal(:finish_after_hook, scenario, err)
+  end
 end
 
 AfterStep do |scenario|
@@ -93,8 +105,8 @@ AfterConfiguration do |config|
     BushSlicer::Debug.step_fail_cucumber2
   end
 
-  ## set test case manager if requested (adds a scenario filter as well)
-  BushSlicer::Manager.instance.init_test_case_manager(config)
+  ## set test case manager and scenario filter if requested
+  BushSlicer::Manager.instance.setup_for_test_run(config)
 end
 
 at_exit do

@@ -3,7 +3,7 @@ Feature: Storage of Ceph plugin testing
   # @author jhou@redhat.com
   # @case_id OCP-10485
   @admin
-  Scenario: Dynamically provision Ceph RBD volumes
+  Scenario: OCP-10485 Dynamically provision Ceph RBD volumes
     Given I have a StorageClass named "cephrbdprovisioner"
     And admin checks that the "cephrbd-secret" secret exists in the "default" project
 
@@ -27,7 +27,7 @@ Feature: Storage of Ceph plugin testing
     And I use the "<%= project.name %>" project
     And I run oc create over "https://raw.githubusercontent.com/openshift-qe/v3-testfiles/master/storage/rbd/dynamic-provisioning/user_secret.yaml" replacing paths:
       | ["data"]["key"] | <%= cb.secret_key %> |
-    When I run oc create over "https://raw.githubusercontent.com/openshift-qe/v3-testfiles/master/storage/rbd/dynamic-provisioning/pod.json" replacing paths:
+    When I run oc create over "https://raw.githubusercontent.com/openshift/verification-tests/master/testdata/storage/rbd/dynamic-provisioning/pod.json" replacing paths:
       | ["spec"]["volumes"][0]["persistentVolumeClaim"]["claimName"] | pvc-<%= project.name %> |
     Then the step should succeed
     And the pod named "rbdpd" becomes ready
@@ -51,7 +51,7 @@ Feature: Storage of Ceph plugin testing
   # @author jhou@redhat.com
   # @case_id OCP-10268
   @admin
-  Scenario: Dynamically provisioned rbd volumes should have correct capacity
+  Scenario: OCP-10268 Dynamically provisioned rbd volumes should have correct capacity
     Given I have a StorageClass named "cephrbdprovisioner"
     # CephRBD provisioner needs secret, verify secret and StorageClass both exists
     And admin checks that the "cephrbd-secret" secret exists in the "default" project

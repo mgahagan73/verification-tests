@@ -3,7 +3,7 @@ Feature: check page info related
   # @author wsun@redhat.com
   # @case_id OCP-10605
   @smoke
-  Scenario: Check Events page
+  Scenario: OCP-10605:UserInterface Check Events page
     Given I have a project
     When I run the :new_app client command with:
       | image_stream | openshift/nodejs:latest                |
@@ -23,7 +23,7 @@ Feature: check page info related
 
   # @author yapei@redhat.com
   # @case_id OCP-12625
-  Scenario: Check home page to list user projects
+  Scenario: OCP-12625 Check home page to list user projects
     Given I login via web console
     When I run the :check_instructions_on_home_page web console action
     Then the step should succeed
@@ -31,15 +31,13 @@ Feature: check page info related
     When I run the :new_project client command with:
       | project_name | <%= cb.prj_name %> |
     Then the step should succeed
-    When I run the :check_project_list web console action
+    When I perform the :check_specific_project web console action with:
+      | project_name | <%= cb.prj_name %> |
     Then the step should succeed
-    When I get the html of the web page
-    Then the output should contain:
-      | <%= cb.prj_name %> |
 
   # @author yanpzhan@redhat.com
   # @case_id OCP-11219
-  Scenario: Check storage page on web console
+  Scenario: OCP-11219 Check storage page on web console
     Given I have a project
     When I perform the :check_empty_storage_page web console action with:
       | project_name | <%= project.name %> |

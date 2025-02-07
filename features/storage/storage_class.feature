@@ -101,7 +101,7 @@ Feature: storageClass related feature
     # check storage zone info
     # gcloud compute disks describe --zone <zone> diskNameViaPvInfo
 
-    When I run oc create over "https://raw.githubusercontent.com/openshift-qe/v3-testfiles/master/storage/misc/pod.yaml" replacing paths:
+    When I run oc create over "https://raw.githubusercontent.com/openshift/verification-tests/master/testdata/storage/misc/pod.yaml" replacing paths:
       | ["metadata"]["name"]                                         | pod-<%= project.name %> |
       | ["spec"]["volumes"][0]["persistentVolumeClaim"]["claimName"] | pvc-<%= project.name %> |
       | ["spec"]["containers"][0]["volumeMounts"][0]["mountPath"]    | /mnt/iaas               |
@@ -170,16 +170,16 @@ Feature: storageClass related feature
   Scenario Outline: New created PVC without specifying storage class use default class when only one class is marked as default
     Given I have a project
     When I run oc create over "https://raw.githubusercontent.com/openshift-qe/v3-testfiles/master/storage/misc/pvc-without-annotations.json" replacing paths:
-      | ["metadata"]["name"] | pvc-<%= project.name %> |
+      | ["metadata"]["name"] | mypvc |
     Then the step should succeed
-    And the "pvc-<%= project.name %>" PVC becomes :bound within 120 seconds
+    And the expression should be true> pvc("mypvc").storage_class == "<default-storage-class-name>"
 
     Examples:
-      | provisioner |
-      | gce-pd      | # @case_id OCP-12171
-      | aws-ebs     | # @case_id OCP-12176
-      | cinder      | # @case_id OCP-12177
-      | azure-disk  | # @case_id OCP-13492
+      | provisioner | default-storage-class-name |
+      | gce-pd      | standard                   | # @case_id OCP-12171
+      | aws-ebs     | gp2                        | # @case_id OCP-12176
+      | cinder      | standard                   | # @case_id OCP-12177
+      | azure-disk  | managed-premium            | # @case_id OCP-13492
 
   # @author chaoyang@redhat.com
   @admin
@@ -200,7 +200,7 @@ Feature: storageClass related feature
     And the expression should be true> pvc.access_modes[0] == "ReadWriteOnce"
     And the expression should be true> pv(pvc.volume_name).reclaim_policy == "Delete"
 
-    When I run oc create over "https://raw.githubusercontent.com/openshift-qe/v3-testfiles/master/storage/misc/pod.yaml" replacing paths:
+    When I run oc create over "https://raw.githubusercontent.com/openshift/verification-tests/master/testdata/storage/misc/pod.yaml" replacing paths:
       | ["metadata"]["name"]                                         | pod-<%= project.name %> |
       | ["spec"]["volumes"][0]["persistentVolumeClaim"]["claimName"] | pvc-<%= project.name %> |
       | ["spec"]["containers"][0]["volumeMounts"][0]["mountPath"]    | /mnt/iaas               |
@@ -257,7 +257,7 @@ Feature: storageClass related feature
   # @author chaoyang@redhat.com
   # @case_id OCP-10159
   @admin
-  Scenario: PVC with storage class won't provisioned pv if no storage class or wrong storage class object
+  Scenario: OCP-10159 PVC with storage class won't provisioned pv if no storage class or wrong storage class object
     Given I have a project
     # No sc exists
     When I create a dynamic pvc from "https://raw.githubusercontent.com/openshift-qe/v3-testfiles/master/storage/misc/pvc.json" replacing paths:
@@ -277,7 +277,7 @@ Feature: storageClass related feature
 
   # @author chaoyang@redhat.com
   # @case_id OCP-10228
-  Scenario: AWS ebs volume is dynamic provisioned with default storageclass
+  Scenario: OCP-10228:Storage AWS ebs volume is dynamic provisioned with default storageclass
     Given I have a project
     When I run oc create over "https://raw.githubusercontent.com/openshift-qe/v3-testfiles/master/storage/ebs/pvc-retain.json" replacing paths:
       | ["metadata"]["name"]                         | pvc-<%= project.name %> |

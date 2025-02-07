@@ -50,19 +50,20 @@ module BushSlicer
 
     RESET = Term::ANSIColor.reset rescue ""
 
-    @@runtime = Kernel unless defined? @@runtime
-
     def self.runtime=(runtime)
       @@runtime = runtime
+      @@puts_method = runtime.respond_to?(:log) ? runtime.method(:log) : runtime.method(:puts)
     end
 
     def self.runtime
-      return @@runtime
+      @@runtime
     end
 
     def self.reset_runtime
-      @@runtime = Kernel
+      self.runtime = Kernel
     end
+
+    reset_runtime unless defined? @@runtime
 
     def initialize(level=nil)
       if level
@@ -152,23 +153,27 @@ module BushSlicer
     end
 
     def print(msg)
-      @@runtime.puts(msg)
+      @@puts_method.call(msg)
     end
 
     # supports embedding content similar with same semantics as Cucumber
     def embed(src, mime_type, label)
-      if @@runtime.respond_to? :embed
+      if self.class.runtime.respond_to? :embed
         info "embedding #{label.inspect}"
-        @@runtime.embed src, mime_type, label
+        self.class.runtime.embed src, mime_type, label
       else
-        if !src.kind_of?(String) || src.empty?
-          warn "empty embedding #{label}??"
-        elsif (File.file?(src) rescue false)
-          info "Embedding request for file: #{File.absolute_path(src)}"
-        elsif src =~ /\A[[:print:]]*\z/
-          print "Embedded #{mime_type} data labeled #{label}:\n#{src}"
+        if src.kind_of?(String)
+          if src.empty?
+            warn "empty string embedding??"
+          elsif (File.file?(src) rescue false)
+            warn "Embedding request for file: #{File.absolute_path(src)}"
+          elsif src =~ /\A[[:print:]]*\z/
+            warn "Embedded #{mime_type} data labeled #{label}:\n#{src}"
+          else
+            warn "Unrecognized #{mime_type} data labeled #{label} (Base64):\n#{Base64.encode64 src}"
+          end
         else
-          print "Unrecognized #{mime_type} data labeled #{label} (Base64):\n#{Base64.encode64 src}"
+          warn "Embedding request for #{mime_type} data labeled #{label} of unrecognized type: #{src.inspect}"
         end
       end
     end
@@ -189,6 +194,7 @@ module BushSlicer
         @messages = []
       end
 
+      # Check if we already have this line and assign index
       def push(msg)
         msg_idx = strings.find_index(msg[:msg])
         unless msg_idx
@@ -211,23 +217,25 @@ module BushSlicer
       def tokenize(strlog)
         ss = StringScanner.new(strlog)
         res = []
-        lastpos = 0
 
-        while ss.skip_until(RE)
-          matched_pos = ss.pos - ss.matched_size
-          pre_match_size = matched_pos - lastpos
-          res << [strlog[lastpos...matched_pos], 1] if pre_match_size > 0
-          lastpos = ss.pos
-          # after the fact I figured we don't need exact sequences, only length
-          #   but leaving it like that for the time being
-          res << [ss[1], ss.matched_size/ss[1].size]
+        while covered_string = ss.scan_until(RE)
+          if covered_string.size > ss.matched.size
+            res << [covered_string[0...-ss.matched.size], 1]
+          end
+          # We don't need to save exact character sequence, only length.
+          #   Saving it for safety check.
+          # StringScanner.matched_size is byte based, for UTF we need
+          #   `matched.size`, see https://bugs.ruby-lang.org/issues/17139
+          res << [ss[1], ss.matched.size/ss[1].size]
         end
 
         res << [ss.rest, 1] if ss.rest?
 
         ## safety check
         processed = res.reduce(0) {|sum, seq| sum + seq[0].size * seq[1]}
-        raise "tokanized #{processed} but had #{strlog.size}" if processed != strlog.size
+        if processed != strlog.size
+          raise "deduplicated as #{processed} messages but raw input had #{strlog.size}"
+        end
 
         return res
       end

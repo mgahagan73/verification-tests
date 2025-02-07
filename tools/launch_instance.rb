@@ -14,7 +14,7 @@ require 'json'
 
 require 'collections'
 require 'common'
-require 'http'
+require 'cucuhttp'
 
 require 'launchers/cloud_helper'
 
@@ -187,19 +187,20 @@ module BushSlicer
     # @param details [Hash] a hash to put additional details about the read
     #   file; this is absolute location as string presently
     def readfile(path, basepath=nil, details: {})
+      uri_parser = URI::RFC2396_Parser.new
       case path
       when %r{\Ahttps?://}
         details[:location] = path
         return Http.get(url: path, raise_on_error: true)[:response]
       when %r{\A/}
         details[:location] = path
-        return File.read(URI::decode(path))
+        return File.read(uri_parser.unescape(path))
       else
         if basepath
           with_base = join_paths_or_urls(basepath, path)
           return readfile(with_base, details: details)
         else
-          details[:location] = expand_path(URI::decode(path))
+          details[:location] = expand_path(uri_parser.unescape(path))
           return File.read details[:location]
         end
       end
@@ -265,8 +266,12 @@ module BushSlicer
         Collections.deep_merge(common_launch_opts, overrides_launch_opts)
     end
 
+    def gen_ose3_timed_random_component
+      return Time.now.strftime("%m%dos3") << "-" << rand_str(3, :dns)
+    end
+
     def dns_component
-      @dns_component ||= BushSlicer::Dynect.gen_timed_random_component
+      @dns_component ||= gen_ose3_timed_random_component
     end
 
     def dns_component=(value)
@@ -397,7 +402,7 @@ module BushSlicer
           create_opts: launch_opts.dup,
           host_opts: host_opts
         )
-      when BushSlicer::OpenStack, BushSlicer::OpenStack4, BushSlicer::OpenStack10
+      when BushSlicer::OpenStack
         create_opts = {}
         res = iaas.launch_instances(
           names: host_names,
@@ -486,8 +491,10 @@ module BushSlicer
       case extra_vars
       when nil
         extra_vars = []
-      when Array, Hash
+      when Hash
         extra_vars = ["-e", extra_vars.to_json]
+      when Array
+        extra_vars = extra_vars.each_with_object([]) { |i, arr| arr << "-e" << i }
       when String
         extra_vars = ["-e", extra_vars]
       else
@@ -500,7 +507,7 @@ module BushSlicer
         res = Host.localhost.exec(
           'ansible-playbook', '-v', '-i', inventory, *extra_vars,
           playbook,
-          env: env, single: true, stderr: :out, stdout: STDOUT, timeout: 36000
+          env: env, single: true, stderr: :stdout, stdout: STDOUT, timeout: 36000
         )
         say "############ ANSIBLE END#{id_str} ############################"
         if res[:success]
@@ -518,22 +525,15 @@ module BushSlicer
         self.dns_component = task[:name]
       when "dns_hostnames"
         begin
-          dyn = nil
-          changed = false
           erb_binding.local_variable_get(:hosts).each do |host|
             if !host.has_hostname?
-              dyn ||= get_dyn
-              changed = true
               dns_record = host[:cloud_instance_name] || rand_str(5, :dns)
               dns_record = dns_record.gsub("_","-")
               dns_record = "#{dns_record}.#{dns_component}"
-              host.update_hostname dyn.dyn_replace_a_records(dns_record, host.ip)
+              host.update_hostname iaas_by_service("AWS-CI").create_a_records(dns_record, [host.ip])
               host[:fix_hostnames] = true
             end
           end
-          dyn.publish if changed
-        ensure
-          dyn.close if dyn
         end
       when "dns_internal_ips"
         if erb_binding.local_variable_defined?(:internal_subdomain)
@@ -543,47 +543,59 @@ module BushSlicer
           int_subdomain += ".#{dns_component}"
         end
         begin
-          dyn = get_dyn
-          erb_binding.local_variable_set(:internal_subdomain, dyn.fqdn(int_subdomain))
+          aws_iaas = iaas_by_service("AWS-CI")
+          base_domain = aws_iaas.default_zone.sub(/[.]$/,"")
+          int_subdomain_fqdn = int_subdomain.end_with?('.') ? int_subdomain[0..-2] : "#{int_subdomain}.#{base_domain}"
+          erb_binding.local_variable_set(:internal_subdomain, int_subdomain_fqdn)
           erb_binding.local_variable_get(:hosts).each do |host|
             dns_record = host[:cloud_instance_name] || rand_str(5, :dns)
             dns_record = dns_record.gsub("_","-")
             dns_record = "#{dns_record}.#{int_subdomain}"
-            host[:internal_fqdn] = dyn.dyn_replace_a_records(dns_record, host.local_ip)
+            host[:internal_fqdn] = aws_iaas.create_a_records(dns_record, [host.local_ip])
             logger.info "Creating '#{dns_record}' record for: internal IP " \
               "#{host.local_ip} of host #{host.hostname}"
           end
-          dyn.publish
-        ensure
-          dyn&.close
         end
-      when "wildcard_dns"
+      when "a_dns"
         begin
-          dyn = get_dyn
-          ips = []
+          ips = task[:ips]
 
-          if task[:roles]
-            hosts = erb_binding.local_variable_get(:hosts)
-            ips.concat(hosts.select{|h| h.has_any_role? task[:roles]}.map(&:ip))
-          end
-          if task[:ips]
-            ips.concat task[:ips]
+          unless ips && !ips.empty?
+            raise 'You need to specify IPs for the `a_dns` task.'
           end
 
-          dns_record = "*.apps.#{dns_component}"
+          dns_record = "#{task[:prefix]}.#{dns_component}"
           logger.info "Creating '#{dns_record}' record for: #{ips.join(?,)}"
-          fqdn = dyn.dyn_replace_a_records(dns_record, ips)
+          fqdn = iaas_by_service("AWS-CI").create_a_records(dns_record, ips)
           if task[:store_in]
             erb_binding.local_variable_set task[:store_in].to_sym, fqdn
           end
-          dyn.publish
-        ensure
-          dyn.close if dyn
         end
+      when "wildcard_dns"
+        ips = []
+
+        if task[:roles]
+          hosts = erb_binding.local_variable_get(:hosts)
+          ips.concat(hosts.select{|h| h.has_any_role? task[:roles]}.map(&:ip))
+        end
+        if task[:ips]
+          ips.concat task[:ips]
+        end
+
+        a_task = {
+          type: "a_dns",
+          prefix: "*.apps",
+          ips: ips,
+          store_in: task[:store_in]
+        }
+        installation_task( a_task,
+                           template: template,
+                           erb_binding: erb_binding,
+                           template_dir: template_dir )
       when "shell_command"
         exec_opts = {
           single: true,
-          stderr: :out, stdout: STDOUT,
+          stderr: :stdout, stdout: STDOUT, stdin: task[:stdin],
           timeout: 36000
         }
         if task[:env]
@@ -604,12 +616,16 @@ module BushSlicer
           raise "shell command failed execution, see logs"
         end
       when "ruby"
-        erb_binding.eval(readfile(task[:file], template_dir), task[:file])
+        if task[:file]
+          ruby_file_details = {}
+          erb_binding.eval(readfile(task[:file], template_dir, details: ruby_file_details), ruby_file_details[:location])
+        elsif task[:expression]
+          erb_binding.eval(task[:expression], "expression_in_template")
+        end
       when "playbook"
         inventory_erb = ERB.new(
           readfile(task[:inventory], template_dir),
-          nil,
-          "<"
+          nil
         )
         inventory_erb.filename = task[:inventory]
         inventory_str = inventory_erb.result(erb_binding)
@@ -657,6 +673,18 @@ module BushSlicer
       hosts = []
       terminate_spec = {}
       file_details = {}
+
+      # Export configuration's block of environment variables to running environment context
+      if Hash === conf[:global, :"install-envvars"]
+        conf[:global, :"install-envvars"].each do |key, val|
+          if ENV.key?(key.to_s)
+            say "WARNING: value from environment variable #{key.to_s} takes precedence over value in 'install-envvars' configuration"
+          else
+            ENV[key.to_s] = val
+          end
+        end
+      end
+
       vars = YAML.load(readfile(config, details: file_details))
       if ENV["LAUNCHER_VARS"] && !ENV["LAUNCHER_VARS"].strip.empty?
         launcher_vars = YAML.load ENV["LAUNCHER_VARS"]
@@ -677,8 +705,7 @@ module BushSlicer
       config_dir = dirname_path_or_url(file_details[:location])
       template = ERB.new(
         readfile(vars[:template], config_dir, details: file_details),
-        nil,
-        "<"
+        nil
       )
       template.filename = file_details[:location]
       erb_binding = Common::BaseHelper.binding_from_hash(launcher_binding,
@@ -690,7 +717,7 @@ module BushSlicer
       # see https://stackoverflow.com/questions/53886078
       erb_binding.local_variable_set :include_erb, lambda { |path, indent=0|
         t = ERB.new(
-          readfile(path, template_dir), nil, "<", rand_str(10, :ruby_variable)
+          readfile(path, template_dir), nil, nil, rand_str(10, :ruby_variable)
         )
         t.filename = path
         t.result(erb_binding).gsub(/^/, " "*indent)
@@ -722,6 +749,8 @@ module BushSlicer
       end
 
       ## perform provisioning steps
+      org_term = Signal.trap('TERM') { raise "Received SIGTERM during installation." }
+      org_int = Signal.trap('INT') { raise "Received SIGINT during installation." }
       template[:install_sequence].each do |task|
         installation_task(
           task,
@@ -745,6 +774,8 @@ module BushSlicer
         end
       end
     ensure
+      Signal.trap('TERM', org_term)
+      Signal.trap('INT', org_int)
       # create a file with launched instances information
       # TODO: change VMINFO to better name here and in Jenkins jobs
       terminate_out = ENV["BUSHSLICER_VMINFO_YAML"] || "vminfo.yml"
@@ -763,7 +794,12 @@ module BushSlicer
             ]
           }.
           to_h
-          terminate_spec.merge! vminfo
+        terminate_spec.merge! vminfo
+        if defined?(dns_component) and (not dns_component.empty?)
+          terminate_spec.merge!({
+            dns_component:  dns_component
+          })
+        end
         begin
           File.write(terminate_out, terminate_spec.to_yaml)
         rescue => e
@@ -836,14 +872,27 @@ module BushSlicer
           vars["template"] = join_paths_or_urls(
             template_org_dir, spec[:template]
           )
+          vars["command_terminate"] = true
           vars_file = Tempfile.new("vars_file_", Host.localhost.workdir)
           vars_file.write(vars.to_yaml)
           vars_file.close
+          ENV["BUSHSLICER_VMINFO_YAML"] = "" # avoid initializing the file
           # we launch a template to clean-up whatever it is
           launch_template(
             config: vars_file.path,
             launched_instances_name_prefix: spec[:name_prefix]
           )
+        when /^dns_component/
+          # remove route53, which should at the end of the yaml
+          if (not spec.nil?) and (not spec.empty?)
+            begin
+              aws_iaas = iaas_by_service("AWS-CI")
+              dns_record_regexp = Regexp.new(/#{spec}/)
+              aws_iaas.delete_resource_records_re(dns_record_regexp)
+            rescue
+              logger.info("Unable to delete DNS records matching #{spec}")
+            end
+          end
         else
           # target assumed to be a service name
           iaas = iaas_by_service(target)
@@ -851,6 +900,11 @@ module BushSlicer
         end
       end
     end
+
+    # return name of currently executed command
+    # def active_command
+    #   Commander::Runner.instance.active_command.name
+    # end
   end
 end
 

@@ -35,7 +35,7 @@ module BushSlicer
     end
 
     def setup_logger
-      BushSlicer::Logger.runtime = @__cucumber_runtime
+      BushSlicer::Logger.runtime = self
     end
 
     def debug_in_after_hook?
@@ -247,7 +247,7 @@ module BushSlicer
     # returns the cache array for the given resource class
     # @param clazz [Class] the resource class we are interested in
     private def resource_cache(clazz)
-      var = "@#{clazz::RESOURCE}"
+      var = "@#{clazz::RESOURCE}".tr(".","_")
       return instance_variable_get(var) || instance_variable_set(var, [])
     end
 
@@ -297,31 +297,29 @@ module BushSlicer
     def cluster_resource(clazz, name = nil, env = nil, switch: nil)
       env ||= self.env
 
-      varname = "@#{clazz::RESOURCE}"
       clazzname = clazz.shortclass
-      var = instance_variable_get(varname) ||
-              instance_variable_set(varname, [])
+      cache = resource_cache(clazz)
 
       if Integer === name
         # using integer index does not trigger reorder of list
-        return var[name] || raise("no #{clazzname} with index #{name}")
+        return cache[name] || raise("no #{clazzname} with index #{name}")
       elsif name
         switch = true if switch.nil?
-        r = var.find {|r| r.name == name && r.env == env}
+        r = cache.find {|r| r.name == name && r.env == env}
         if r
-          var << var.delete(r) if switch
+          cache << cache.delete(r) if switch
           return r
         else
           # create new BushSlicer::ClusterResource object with specified name
-          var << clazz.new(name: name, env: env)
-          return var.last
+          cache << clazz.new(name: name, env: env)
+          return cache.last
         end
-      elsif var.empty?
+      elsif cache.empty?
         # we do not create a random PV like with projects because that
         #   would rarely make sense
         raise "what #{clazzname} are you talking about?"
       else
-        return var.last
+        return cache.last
       end
     end
 
@@ -427,13 +425,6 @@ module BushSlicer
       @teardown.reverse_each { |f| f.call }
     end
 
-    def hook_error!(err)
-      if err
-        quit_cucumber
-        raise err
-      end
-    end
-
     # @return the desired base docker image tag prefix based on
     #   PRODUCT_DOCKER_REPO env variable
     def product_docker_repo(environment = env)
@@ -449,6 +440,34 @@ module BushSlicer
 
     def project_docker_repo
       conf[:project_docker_repo]
+    end
+
+    # transforms <%= expression %> inside variables of a target binding
+    # it is safer not to modify the original strings and tables
+    # @param [String, Cucumber::MultilineArgument::DataTable] x field to process
+    # @return string with expanded evaluation of expressions
+    def transform_value(x)
+      if x.nil?
+        nil
+      elsif x.respond_to? :raw
+        table( x.raw.map { |row| row.map { |cell| transform_value(cell) } } )
+      elsif x.respond_to? :gsub
+        x.gsub(/<%=(.+?)%>/m) { |c| eval $1 }
+      elsif Numeric === x
+        x.to_s
+      else
+        raise ArgumentError, "Unexected argument: #{x.inspect}"
+      end
+    end
+
+    def transform(target_binding, *variables)
+      b = target_binding
+      unless Binding === b
+        raise ArgumentError, "First argument must be a Binding, instead it is #{b.inspect}"
+      end
+      variables.each do |v|
+        b.local_variable_set(v, transform_value(b.local_variable_get(v)))
+      end
     end
 
     # Embedded table delimiter is '!' if '|' not used

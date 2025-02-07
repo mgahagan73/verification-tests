@@ -1,6 +1,8 @@
 source 'https://rubygems.org'
+# source 'https://gems.ruby-china.com/'
+
 gem 'json'
-gem 'psych'
+gem 'psych', '~> 3.3', '>= 3.3.1'
 # gem 'rest-client', '2.0.0.rc2'
 gem 'rest-client', '>=2.0'
 # gem 'httpclient', '>=2.4'
@@ -10,17 +12,22 @@ gem 'net-ssh'
 # https://github.com/net-ssh/net-ssh/pull/646
 gem 'net-scp'
 # gem 'net-ssh-multi'
-gem 'cucumber', '~>2.4.0'
+
+##### Things to verify on Cucumber upgrade: #####
+# the hack in step_definitions/transform.rb
+# ReportPortal formatter (in case Formatter API changed
+# The PolarShift scenario filter - TestCaseManagerFilter
+# BushSlicer::CucuFormatter is we are still uploading html logs to a file server
+gem 'cucumber', '~>5.3.0'
+#########################
+
 # gem 'rspec', '~>2.14.1'
 # gem 'rspec-expectations', '~>2.14.0'
-gem 'aws-sdk', '~> 2'
+gem 'aws-sdk', '~> 3'
 gem 'google-api-client', '~>0.9.2'
 gem 'rbvmomi'
 
-gem 'azure-storage'
-# for upgrading to 0.15.x see according to changelog
-# https://github.com/Azure/azure-sdk-for-ruby/pull/1090
-# https://github.com/Azure/azure-sdk-for-ruby/pull/1092
+gem 'azure-storage', '~> 0.15.0.preview'
 gem 'azure_mgmt_storage', '~>0.17.0'
 gem 'azure_mgmt_compute', '~>0.18.0'
 gem 'azure_mgmt_resources', '~>0.17.0'
@@ -33,6 +40,8 @@ gem 'term-ansicolor'
 gem 'watir'
 gem 'headless'
 gem 'selenium-webdriver'
+gem 'protobuf'
+gem 'reportportal'
 ## Docs
 # beware https://github.com/pry/pry/issues/1465
 #        https://bugzilla.redhat.com/show_bug.cgi?id=1257578
@@ -50,6 +59,7 @@ gem 'nokogiri' # needed here to make tools/hack_bundle.rb work correctly
 # oga is a replacemen for nokogiri without system deps; we wrongly thought
 #  that we can live without nokogiry but couldn't because of other gem deps
 gem 'oga' # replacemen for nokogiri when we thought we can workaround it
+gem 'thwait'
 # gem 'gherkin', '>=4.0.0'
 # gem 'lolsoap'
 # gem 'mongo'
@@ -61,3 +71,4 @@ gem 'oga' # replacemen for nokogiri when we thought we can workaround it
 # gem 'mongoid'
 # gem 'text-table'
 # gem 'terminal-table'
+
